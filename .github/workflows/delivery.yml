@@ -1,0 +1,32 @@
+name: Delivery
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: crear zip del repositorio
+        run: |
+          git archive --format=zip \
+            --prefix="${{ github.event.repository.name }}-${{ github.ref_name }}/" \
+            -o "${{ github.event.repository.name }}-${{ github.ref_name }}.zip" \
+            HEAD
+
+      - name: crear release en GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            "${{ github.event.repository.name }}-${{ github.ref_name }}.zip" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
