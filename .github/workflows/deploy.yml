@@ -1,0 +1,105 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "tag a desplegar (ej. v1.0.0)"
+        required: true
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+  AWS_DEFAULT_REGION: us-east-1
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }} # en un push de tag, head_branch contiene el nombre del tag
+
+    steps:
+      - name: validar tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Tag invalido: $TAG"; exit 1; }
+
+      - name: obtener IP de la EC2
+        run: |
+          IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=tasks-app" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          if [ -z "$IP" ] || [ "$IP" = "None" ]; then
+            echo "No hay una instancia EC2 tasks-app corriendo"; exit 1
+          fi
+          echo "EC2_IP=$IP" >> "$GITHUB_ENV"
+
+      - name: configurar SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/tasks-key
+          chmod 600 ~/.ssh/tasks-key
+
+      - name: desplegar en la EC2
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${REPO_NAME}-${TAG}.zip"
+
+          ssh -i ~/.ssh/tasks-key \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            ubuntu@"$EC2_IP" "sudo bash -s -- '$TAG' '$URL'" <<'REMOTE'
+          set -e
+          TAG="$1"; URL="$2"
+          BASE=/opt/tasks
+          REL="$BASE/releases/$TAG"
+          PREV=$(readlink -f "$BASE/current")
+
+          # descargar y descomprimir el release
+          TMP=$(mktemp -d)
+          curl -fsSL "$URL" -o "$TMP/release.zip"
+          unzip -q "$TMP/release.zip" -d "$TMP/x"
+          rm -rf "$REL"; mkdir -p "$REL"
+          cp -a "$TMP"/x/*/. "$REL"/
+          rm -rf "$TMP"
+
+          # instalar dependencias
+          "$BASE/venv/bin/pip" install -q -r "$REL/requirements.txt"
+
+          # 3. cambiar version y reiniciar tasks
+          cp /etc/tasks.env /etc/tasks.env.prev
+          echo "APP_VERSION=$TAG" > /etc/tasks.env
+          ln -sfn "$REL" "$BASE/current"
+          systemctl restart tasks
+
+          # 4. health check
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:5000/version | grep -qF "$TAG"; then
+              echo "Se desplego $TAG correctamente"
+              ls -dt "$BASE"/releases/* | tail -n +4 | xargs -r rm -rf
+              exit 0
+            fi
+            sleep 2
+          done
+
+          # 5. rollback si no hay respuesta
+          echo "La nueva version no responde. Restaurando a $PREV"
+          ln -sfn "$PREV" "$BASE/current"
+          cp /etc/tasks.env.prev /etc/tasks.env
+          systemctl restart tasks
+          journalctl -u tasks -n 30 --no-pager
+          exit 1
+          REMOTE
+
+      - name: resultado
+        run: |
+          echo "http://$EC2_IP:5000/version" >> "$GITHUB_STEP_SUMMARY"
