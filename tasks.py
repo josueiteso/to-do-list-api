@@ -9,6 +9,7 @@ app = Flask(__name__)
 
 SECRET_NAME = os.environ["DB_SECRET_NAME"]
 AWS_REGION = os.environ["AWS_REGION"]
+APP_VERSION = os.environ.get("APP_VERSION", "unknown")
 
 
 def get_rds_credentials():
@@ -75,6 +76,11 @@ def add_task():
     except psycopg2.Error as e:
         app.logger.error("DB error: %s", e)
         return jsonify({"error": "Error de base de datos"}), 500
+
+
+@app.route("/version", methods=["GET"])
+def get_version():
+    return jsonify({"version": APP_VERSION}), 200
 
 
 if __name__ == "__main__":

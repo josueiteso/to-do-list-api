@@ -168,14 +168,16 @@ resource "aws_instance" "tasks" {
 
     # instalamos python y postgresql client
     apt-get update -y
-    apt-get install -y git python3-venv python3-pip postgresql-client
+    apt-get install -y git python3-venv python3-pip postgresql-client unzip libpq-dev gcc python3-dev
 
     # clonar el repo
-    git clone ${var.repo_url} /opt/app
+    mkdir -p /opt/tasks/releases
+    git clone ${var.repo_url} /opt/tasks/releases/initial
+    ln -sfn /opt/tasks/releases/initial /opt/tasks/current
 
     # instalar dependencias
-    python3 -m venv /opt/app/venv
-    /opt/app/venv/bin/pip install -r /opt/app/requirements.txt
+    python3 -m venv /opt/tasks/venv
+    /opt/tasks/venv/bin/pip install -r /opt/tasks/current/requirements.txt
 
     # servicio systemd para que la app arranque al boot
     cat > /etc/systemd/system/tasks.service <<EOF
@@ -185,7 +187,8 @@ resource "aws_instance" "tasks" {
 
     # ahora definimos el secret de secrets manager
     [Service]
-    WorkingDirectory=/opt/app
+    WorkingDirectory=/opt/tasks/current
+    EnvironmentFile=/etc/tasks.env
     Environment=DB_SECRET_NAME=${aws_secretsmanager_secret.db.name}
     Environment=AWS_REGION=${var.region}
     ExecStart=/opt/app/venv/bin/python ${var.app_file}
