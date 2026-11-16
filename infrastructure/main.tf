@@ -179,19 +179,21 @@ resource "aws_instance" "tasks" {
     python3 -m venv /opt/tasks/venv
     /opt/tasks/venv/bin/pip install -r /opt/tasks/current/requirements.txt
 
+    # version inicial (el deploy la sobrescribe con el tag)
+    echo "APP_VERSION=initial" > /etc/tasks.env
+
     # servicio systemd para que la app arranque al boot
     cat > /etc/systemd/system/tasks.service <<EOF
     [Unit]
     Description=Flask Tasks App
     After=network.target
 
-    # ahora definimos el secret de secrets manager
     [Service]
     WorkingDirectory=/opt/tasks/current
     EnvironmentFile=/etc/tasks.env
     Environment=DB_SECRET_NAME=${aws_secretsmanager_secret.db.name}
     Environment=AWS_REGION=${var.region}
-    ExecStart=/opt/app/venv/bin/python ${var.app_file}
+    ExecStart=/opt/tasks/venv/bin/python ${var.app_file}
     Restart=always
     RestartSec=5
 
