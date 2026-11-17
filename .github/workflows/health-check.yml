@@ -1,0 +1,37 @@
+name: Health Check
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+  AWS_DEFAULT_REGION: us-east-1
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Obtener IP de la EC2
+        run: |
+          IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=tasks-app" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          if [ -z "$IP" ] || [ "$IP" = "None" ]; then
+            echo "No hay una instancia EC2 tasks-app corriendo"; exit 1
+          fi
+          echo "EC2_IP=$IP" >> "$GITHUB_ENV"
+
+      - name: consultar /health
+        run: |
+          URL="http://${EC2_IP}:5000/health"
+          echo "GET $URL"
+          curl -sS --fail-with-body --max-time 10 \
+            --retry 2 --retry-delay 5 "$URL" | tee health.json
+          echo
+          cat health.json >> "$GITHUB_STEP_SUMMARY"
