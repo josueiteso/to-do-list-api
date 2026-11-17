@@ -4,6 +4,7 @@ import psycopg2
 import json
 import os
 from contextlib import closing
+from datetime import datetime, timezone
 
 app = Flask(__name__)
 
@@ -81,6 +82,26 @@ def add_task():
 @app.route("/version", methods=["GET"])
 def get_version():
     return jsonify({"version": APP_VERSION}), 200
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    try:
+        with closing(get_conn()) as conn, conn, conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        db_status = "OK"
+    except psycopg2.Error as e:
+        app.logger.error("Health check DB error: %s", e)
+        db_status = "FAIL"
+
+    body = {
+        "status": db_status,
+        "database": db_status,
+        "version": APP_VERSION,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    return jsonify(body), (200 if db_status == "OK" else 503)
 
 
 if __name__ == "__main__":
