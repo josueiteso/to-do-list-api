@@ -5,12 +5,14 @@ import json
 import os
 from contextlib import closing
 from datetime import datetime, timezone
+from metrics import MetricsPublisher
 
 app = Flask(__name__)
 
 SECRET_NAME = os.environ["DB_SECRET_NAME"]
 AWS_REGION = os.environ["AWS_REGION"]
 APP_VERSION = os.environ.get("APP_VERSION", "unknown")
+metrics = MetricsPublisher(region=AWS_REGION)
 
 
 def get_rds_credentials():
@@ -55,7 +57,7 @@ def get_tasks():
             tasks = [{"id": r[0], "tarea": r[1]} for r in cur.fetchall()]
         return jsonify(tasks), 200
     except psycopg2.Error as e:
-        app.logger.error("DB error: %s", e)
+        metrics.incr("DbErrors")
         return jsonify({"error": "Error de base de datos"}), 500
 
 
@@ -73,9 +75,10 @@ def add_task():
                 (data["tarea"],),
             )
             row = cur.fetchone()
+        metrics.incr("TasksCreated")
         return jsonify({"id": row[0], "tarea": row[1]}), 201
     except psycopg2.Error as e:
-        app.logger.error("DB error: %s", e)
+        metrics.incr("DbErrors")
         return jsonify({"error": "Error de base de datos"}), 500
 
 
@@ -92,7 +95,7 @@ def health():
             cur.fetchone()
         db_status = "OK"
     except psycopg2.Error as e:
-        app.logger.error("Health check DB error: %s", e)
+        metrics.incr("DbErrors")
         db_status = "FAIL"
 
     body = {
@@ -105,4 +108,5 @@ def health():
 
 
 if __name__ == "__main__":
+    metrics.start()
     app.run(host="0.0.0.0", debug=True, port=5000)
