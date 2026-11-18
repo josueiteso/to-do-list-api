@@ -15,6 +15,7 @@ env:
   TF_VAR_region: us-east-1
   TF_VAR_permitted_ip_cidr: ${{ secrets.PERMITTED_IP_CIDR }}
   TF_VAR_repo_url: https://github.com/${{ github.repository }}
+  TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
 
 jobs:
   apply:

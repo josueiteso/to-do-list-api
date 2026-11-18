@@ -42,6 +42,11 @@ provider "aws" {
   region = var.region
 }
 
+variable "alert_email" {
+  type        = string
+  description = "correo que recibe las notificaciones de las alarmas"
+}
+
 # ami de ubntu server
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -210,6 +215,71 @@ resource "aws_instance" "tasks" {
   }
 }
 
+# topico sns
+resource "aws_sns_topic" "alerts" {
+  name = "tasks-app-alerts"
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# alarma 1: status check de la EC2
+# con la metrica nativa de AWS StatusCheckFailed
+resource "aws_cloudwatch_metric_alarm" "ec2_status_check" {
+  alarm_name          = "tasks-ec2-status-check-failed"
+  alarm_description   = "La instancia EC2 fallo sus status checks"
+  namespace           = "AWS/EC2"
+  metric_name         = "StatusCheckFailed"
+  dimensions          = { InstanceId = aws_instance.tasks.id }
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
+# alarma 2: errores al leer o escribir base de datos
+# con la metrica personal DbErrors
+resource "aws_cloudwatch_metric_alarm" "db_errors" {
+  alarm_name          = "tasks-app-db-errors"
+  alarm_description   = "La app reporta errores al leer o escribir en RDS"
+  namespace           = "TasksApp"
+  metric_name         = "DbErrors"
+  dimensions          = { Service = "tasks-app" }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 3
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
+# alarma 3: pico anormal de creacion de tareas
+# con la metrica personal TasksCreated
+resource "aws_cloudwatch_metric_alarm" "tasks_created_spike" {
+  alarm_name          = "tasks-app-tasks-created-spike"
+  alarm_description   = "Se crean demasiadas tareas en poco tiempo"
+  namespace           = "TasksApp"
+  metric_name         = "TasksCreated"
+  dimensions          = { Service = "tasks-app" }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 20
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
 # outputs
 output "public_ip" {
   value = aws_instance.tasks.public_ip
@@ -221,4 +291,8 @@ output "tasks_url" {
 
 output "db_endpoint" {
   value = aws_db_instance.tasks.address
+}
+
+output "alerts_topic_arn" {
+  value = aws_sns_topic.alerts.arn
 }
